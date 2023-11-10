@@ -1,31 +1,69 @@
-import * as React from 'react';
-
-import { StyleSheet, View, Text } from 'react-native';
-import { multiply } from 'rn-alarm';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, TouchableNativeFeedback, View } from 'react-native';
+import { setupAndroidNotifChannel } from 'rn-alarm';
+import { AlarmScreen } from './AlarmScreen';
+import { PermissionScreen } from './PermissionScreen';
 
 export default function App() {
-  const [result, setResult] = React.useState<number | undefined>();
+  const [screen, setScreen] = useState<'Alarms' | 'Permissions'>('Alarms');
 
-  React.useEffect(() => {
-    multiply(3, 7).then(setResult);
+  useEffect(() => {
+    setupAndroidNotifChannel();
   }, []);
 
   return (
     <View style={styles.container}>
-      <Text>Result: {result}</Text>
+      <View style={styles.contentContainer}>
+        {screen === 'Alarms' && <AlarmScreen />}
+        {screen === 'Permissions' && <PermissionScreen />}
+      </View>
+
+      <View style={styles.bottomBar}>
+        <TouchableNativeFeedback onPress={() => setScreen('Alarms')}>
+          <View style={styles.bottomBarItem}>
+            <Text>Alarms</Text>
+          </View>
+        </TouchableNativeFeedback>
+        <TouchableNativeFeedback onPress={() => setScreen('Permissions')}>
+          <View style={styles.bottomBarItem}>
+            <Text>Permissions</Text>
+          </View>
+        </TouchableNativeFeedback>
+      </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+export const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  contentContainer: {
+    flex: 1,
+    paddingVertical: 30,
     alignItems: 'center',
     justifyContent: 'center',
   },
   box: {
-    width: 60,
-    height: 60,
-    marginVertical: 20,
+    width: '75%',
+    height: 50,
+    borderWidth: 1,
+    borderRadius: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spacer: {
+    height: 30,
+  },
+  bottomBar: {
+    height: 50,
+    marginTop: 'auto',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+  },
+  bottomBarItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
