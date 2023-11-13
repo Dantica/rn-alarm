@@ -2,84 +2,132 @@ package com.rnalarm
 
 import android.content.ContentResolver
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import kotlin.math.ln
-
 
 /**
  * Responsible for running alarm sounds.
  */
 object RnAlarmPlayer {
-  private var mediaPlayer: MediaPlayer = MediaPlayer()
-  private var currentPlayingAlarmID: Int? = null
-  private var userVolume: Float = 50f
+  private var mediaPlayer: MediaPlayer? = MediaPlayer()
+  private var userStopped: Boolean = false
+  private var userSnoozed: Boolean = false
+  private var dontReschedule: Boolean = false
+  var currentPlayingAlarmID: Int? = null
 
   /**
-   * Play an alarm sound
-   * @param sound Sound to play
+   * Play an alarm sound.
    */
-  fun playAlarm(context: Context, alarmID: Int, customSound: String?) {
-    mediaPlayer = MediaPlayer()
+  fun playAlarm(
+    context: Context,
+    alarm: RnAlarm,
+    onAlarmUserStop: () -> Unit,
+    onAlarmUserSnooze: () -> Unit,
+    onAlarmTimeout: () -> Unit
+  ) {
+    if (mediaPlayer != null && mediaPlayer!!.isPlaying) return
 
     val defaultRingtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
     var alarmSoundUri = defaultRingtoneUri
-    if (customSound !== null) {
+    if (alarm.soundPath !== null) {
       alarmSoundUri = Uri.parse(
-        ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.packageName + customSound
+        ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.packageName + alarm.soundPath
       )
     }
+
     try {
-      mediaPlayer.setDataSource(context, alarmSoundUri)
-      mediaPlayer.setAudioStreamType(AudioManager.STREAM_NOTIFICATION)
-      mediaPlayer.prepare()
-      mediaPlayer.setOnCompletionListener { mp ->
+      // Set volume to maximum to allow user's volume to be set directly in the media player.
+      val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+      val originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+      audioManager.setStreamVolume(
+        AudioManager.STREAM_ALARM, audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0
+      )
+
+      mediaPlayer = MediaPlayer()
+
+      // Set volume to value specified by alarm.
+      val logVolume = changeVolumeScale(alarm.soundVolume)
+      mediaPlayer!!.setVolume(logVolume, logVolume) // For both left and right ear channels.
+
+      val audioAttributes =
+        AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+          .setUsage(AudioAttributes.USAGE_ALARM).build()
+      mediaPlayer!!.setAudioAttributes(audioAttributes)
+      mediaPlayer!!.setAudioStreamType(AudioManager.STREAM_ALARM)
+
+      // Set source and prepare.
+      mediaPlayer!!.setDataSource(context, alarmSoundUri)
+      mediaPlayer!!.prepare()
+
+      // Set to stop the track after the specified duration.
+      val duration = alarm.soundDuration ?: mediaPlayer!!.duration
+      val handlerThread = HandlerThread("StopTrackAfterDurationHandlerThread")
+      handlerThread.start()
+      val handler = Handler(handlerThread.looper)
+      handler.postDelayed({
+        stop()
+        handlerThread.quitSafely()
+      }, duration.toLong())
+      mediaPlayer!!.isLooping = true
+
+      // Prepare to send alarm playing events
+      val rnAlarmEvent = RnAlarmEvent(context)
+
+      // Set listener when alarm stops. This could either be when the time runs out (above), or if
+      // the user actively stops the alarm.
+      mediaPlayer!!.setOnCompletionListener { mp ->
         mp.release()
+        mediaPlayer = null
+        handlerThread.quitSafely()
         currentPlayingAlarmID = null
+        // Reset to original volume afterwards.
+        audioManager.setStreamVolume(AudioManager.STREAM_ALARM, originalVolume, 0)
+
+        if (userStopped) {
+          onAlarmUserStop()
+          userStopped = false
+        } else if (userSnoozed) {
+          onAlarmUserSnooze()
+          userSnoozed = false
+        } else if (dontReschedule) {
+          dontReschedule = false
+        } else {
+          onAlarmTimeout()
+        }
+
+        rnAlarmEvent.sendAlarmPlayingEvent(null)
       }
-      mediaPlayer.start()
-      currentPlayingAlarmID = alarmID
+
+      mediaPlayer!!.start()
+      currentPlayingAlarmID = alarm.id
+      rnAlarmEvent.sendAlarmPlayingEvent(alarm)
+      Log.d("rn-alarm-debug", "Playing alarm...")
     } catch (e: Exception) {
-      Log.d("rn-alarm-debug", "Failed to play alarm sound")
-      Log.d("rn-alarm-debug", e.stackTraceToString())
+      Log.d("rn-alarm-debug", "Failed to play alarm sound. " + e.stackTraceToString())
     }
   }
 
-  fun currentlyPlayingAlarmID(): Int? {
-    return currentPlayingAlarmID
-  }
-
   /**
-   * Stops the alarm from playing
+   * Stops the alarm from playing.
+   * @param userStopped Whether the user stopped the alarm manually.
+   * @param userSnoozed Whether the user has snoozed the alarm.
    */
-  fun stop() {
-    if (isPlaying()) mediaPlayer.stop()
+  fun stop(userStopped: Boolean = false, userSnoozed: Boolean = false, dontReschedule: Boolean = false) {
+    if (mediaPlayer != null && mediaPlayer!!.isPlaying) {
+      this.userStopped = userStopped
+      this.userSnoozed = userSnoozed
+      this.dontReschedule = dontReschedule
+      mediaPlayer!!.isLooping = false
+      mediaPlayer!!.seekTo(mediaPlayer!!.duration)
+    }
   }
-
-  /**
-   * Checks whether the alarm is playing
-   */
-  fun isPlaying(): Boolean {
-    return mediaPlayer.isPlaying
-  }
-
-  /**
-   * Set the alarm volume
-   * @param volume Volume level, between 0 and 100 inclusive
-   */
-  fun setVolume(volume: Float) {
-    val logVolume = changeVolumeScale(volume)
-    // Two logVolumes for both left and right ear channels
-    mediaPlayer.setVolume(logVolume, logVolume)
-    userVolume = volume
-  }
-
-  //  companion object {
-  private const val GONG_TRACK = "/raw/fzn_gong"
-  private const val CUSTOM_NOTIFICATION_TRACK = "/raw/pristine"
 
   /**
    * Makes the volume log(log()) scaled
@@ -87,14 +135,49 @@ object RnAlarmPlayer {
    * @return The log(log()) scaled volume between 0.0 and 1.0
    */
   private fun changeVolumeScale(volume: Float): Float {
-    val MAX_VOLUME = 100
+    val maxVolume = 100
     // Log the volume scale, converting 0 to 100 volume into a double between 0 and 1
-    val firstLog = 1 - ln((1 + MAX_VOLUME - volume).toDouble()) / ln((1 + MAX_VOLUME).toDouble())
+    val firstLog = 1 - ln((1 + maxVolume - volume).toDouble()) / ln((1 + maxVolume).toDouble())
 
     // Log the scale again, converting 0 to 100 logged volume into a double between 0 and 1
-    val secondLog =
-      1 - ln(1 + MAX_VOLUME - firstLog * MAX_VOLUME) / ln((1 + MAX_VOLUME).toDouble())
+    val secondLog = 1 - ln(1 + maxVolume - firstLog * maxVolume) / ln((1 + maxVolume).toDouble())
     return secondLog.toFloat()
-//    }
+  }
+
+  /**
+   * Play a basic notification sound.
+   */
+  fun playNotificationSound(context: Context, alarm: RnAlarm) {
+    // Set volume to maximum to allow user's volume to be set directly in the media player.
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    val originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+    audioManager.setStreamVolume(
+      AudioManager.STREAM_ALARM, audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0
+    )
+
+    val notificationMediaPlayer = MediaPlayer()
+    // Set volume to value specified by alarm.
+    val logVolume = changeVolumeScale(alarm.reminderVolume)
+    notificationMediaPlayer!!.setVolume(
+      logVolume,
+      logVolume
+    ) // For both left and right ear channels.
+
+    val audioAttributes =
+      AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ALARM).build()
+    notificationMediaPlayer.setAudioAttributes(audioAttributes)
+    notificationMediaPlayer.setAudioStreamType(AudioManager.STREAM_ALARM)
+
+    val notificationSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+    notificationMediaPlayer.setDataSource(context, notificationSoundUri)
+
+    notificationMediaPlayer.prepare()
+    notificationMediaPlayer.setOnCompletionListener { mp ->
+      mp.release()
+      // Reset to original volume afterwards.
+      audioManager.setStreamVolume(AudioManager.STREAM_ALARM, originalVolume, 0)
+    }
+    notificationMediaPlayer.start()
   }
 }

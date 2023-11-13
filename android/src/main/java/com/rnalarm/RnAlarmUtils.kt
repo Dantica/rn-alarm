@@ -4,7 +4,9 @@ import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.ReadableType
 import com.facebook.react.bridge.WritableMap
+import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -12,8 +14,9 @@ object RnAlarmUtils {
   /**
    * Determines the next time the alarm should ring, in milliseconds.
    */
-  fun calculateNextAlarmTime(alarm: RnAlarm): Long {
+  fun calculateNextAlarmTime(alarm: RnAlarm, turnOffForToday: Boolean = false): Long {
     val currentCalendar = Calendar.getInstance()
+    if (turnOffForToday) currentCalendar.add(Calendar.DATE, 1)
 
     // Set the calendar for the next alarm.
     val alarmCalendar = Calendar.getInstance()
@@ -21,23 +24,24 @@ object RnAlarmUtils {
     alarmCalendar.set(Calendar.MINUTE, alarm.minute)
     alarmCalendar.set(Calendar.SECOND, alarm.second)
     alarmCalendar.set(Calendar.MILLISECOND, 0)
+    if (turnOffForToday) alarmCalendar.add(Calendar.DATE, 1)
 
-    // Get the current day of the week (1 for Monday, 7 for Sunday). Value must be adjust, as by
+    // Get the current day of the week (1 for Monday, 7 for Sunday). Value must be adjusted, as by
     // default Android Studio makes Sunday 1 and Saturday 7.
     var currentDayOfWeekCounter = (currentCalendar.get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1
 
     // Check if the alarm time has already passed for the current day.
-    if (alarmCalendar.timeInMillis < currentCalendar.timeInMillis) {
+    if (alarmCalendar.timeInMillis < currentCalendar.timeInMillis && !turnOffForToday) {
       // If the alarm time has passed for today, move to the next day.
       alarmCalendar.add(Calendar.DATE, 1)
       currentDayOfWeekCounter = (currentDayOfWeekCounter % 7) + 1 // Wrap around if needed.
     }
 
-    // Search for the next valid day if repeat is set to true.
-    if (RnAlarmUtils.alarmShouldRepeat(alarm)) {
+    // Search for the next valid day.
+    if (!alarm.repeatOnDays.isNullOrEmpty()) {
       val maxCounter = 7
       var counter = 0
-      while (currentDayOfWeekCounter.toString() !in alarm.repeatOnDays && counter < maxCounter) {
+      while (currentDayOfWeekCounter.toString() !in alarm.repeatOnDays!! && counter < maxCounter) {
         alarmCalendar.add(Calendar.DATE, 1)
         currentDayOfWeekCounter = (currentDayOfWeekCounter % 7) + 1
         counter++
@@ -47,125 +51,165 @@ object RnAlarmUtils {
     return alarmCalendar.timeInMillis
   }
 
+  fun calculateNextSnoozedAlarmTime(alarm: RnAlarm, snoozeCounter: Int): Long {
+    val currentCalendar = Calendar.getInstance()
+
+    // Set the calendar for the next alarm.
+    val alarmCalendar = Calendar.getInstance()
+    alarmCalendar.set(Calendar.HOUR_OF_DAY, alarm.hour)
+    alarmCalendar.set(Calendar.MINUTE, alarm.minute)
+    alarmCalendar.set(Calendar.SECOND, alarm.second)
+    alarmCalendar.set(Calendar.MILLISECOND, 0)
+    // Add on extra snooze time.
+    alarmCalendar.add(Calendar.MILLISECOND, snoozeCounter * alarm.snoozeTime)
+
+    // This shouldn't happen.
+    if (alarmCalendar.timeInMillis < currentCalendar.timeInMillis) {
+      Log.d("rn-alarm-debug", "Snoozing alarm, but snoozed alarm time is in the past.")
+      Log.d(
+        "rn-alarm-debug", "Current time: " +
+          SimpleDateFormat("dd/MM/yy HH:mm:ss").format(currentCalendar.timeInMillis)
+      )
+      Log.d(
+        "rn-alarm-debug", "Alarm time: " +
+          SimpleDateFormat("dd/MM/yy HH:mm:ss").format(alarmCalendar.timeInMillis)
+      )
+    }
+
+    return alarmCalendar.timeInMillis
+  }
+
   /**
    * Convert a ReadableMap alarm received from React Native into RnAlarm format.
    */
   fun getRnAlarmFromMap(alarmConfig: ReadableMap, promise: Promise? = null): RnAlarm? {
-    if (!alarmConfig.hasKey("id") || !alarmConfig.hasKey("hour") || !alarmConfig.hasKey("minute")) {
-      Log.d("rn-alarm-debug", "React Native app did not provide alarm id, hour, and minute.")
-      promise?.reject(Error("Did not provide id, hour, and minute."))
+    try {
+      // Calculate offsets.
+      val timeZone: TimeZone = TimeZone.getDefault()
+      val calendar: Calendar = Calendar.getInstance(timeZone)
+      val timezoneOffset: Int = timeZone.getOffset(calendar.getTimeInMillis())
+      val daylightSavingsOffset: Int = timeZone.getOffset(calendar.getTimeInMillis())
+
+      return RnAlarm(
+        id = alarmConfig.getInt("id"),
+        hour = alarmConfig.getInt("hour"),
+        minute = alarmConfig.getInt("minute"),
+        second = alarmConfig.getInt("second"),
+        enabled = alarmConfig.getBoolean("enabled"),
+        name = alarmConfig.getString("name"),
+        repeatOnDays = alarmConfig.getString("repeatOnDays"),
+        soundPath = alarmConfig.getString("soundPath"),
+        soundDuration = if (alarmConfig.getDynamic("soundDuration").type == ReadableType.Number) alarmConfig.getInt(
+          "soundDuration"
+        ) else null,
+        soundVolume = alarmConfig.getDouble("soundVolume").toFloat(),
+        launchApp = alarmConfig.getBoolean("launchApp"),
+        militaryTime = alarmConfig.getBoolean("militaryTime"),
+        snoozeTime = alarmConfig.getInt("snoozeTime"),
+        autoSnooze = alarmConfig.getBoolean("autoSnooze"),
+        maxAutoSnoozeCounter = alarmConfig.getInt("maxAutoSnoozeCounter"),
+        showNotif = alarmConfig.getBoolean("showNotif"),
+        notifTitle = alarmConfig.getString("notifTitle")!!,
+        notifDescription = alarmConfig.getString("notifDescription")!!,
+        notifShowSnooze = alarmConfig.getBoolean("notifShowSnooze"),
+        notifSnoozeText = alarmConfig.getString("notifSnoozeText")!!,
+        notifShowTurnOff = alarmConfig.getBoolean("notifShowTurnOff"),
+        notifTurnOffText = alarmConfig.getString("notifTurnOffText")!!,
+        showReminderNotif = alarmConfig.getBoolean("showReminderNotif"),
+        reminderVolume = alarmConfig.getDouble("reminderVolume").toFloat(),
+        reminderNotifTimeBefore = alarmConfig.getInt("reminderNotifTimeBefore"),
+        reminderNotifTitle = alarmConfig.getString("reminderNotifTitle")!!,
+        reminderNotifDescription = alarmConfig.getString("reminderNotifDescription")!!,
+        reminderNotifTurnOffText = alarmConfig.getString("reminderNotifTurnOffText")!!,
+        showMissedNotif = alarmConfig.getBoolean("showMissedNotif"),
+        missedNotifTitle = alarmConfig.getString("missedNotifTitle")!!,
+        missedNotifDescription = alarmConfig.getString("missedNotifDescription")!!,
+        adjustWithTimezone = alarmConfig.getBoolean("adjustWithTimezone"),
+        adjustWithDaylightSavings = alarmConfig.getBoolean("adjustWithDaylightSavings"),
+        timezoneOffset = timezoneOffset,
+        daylightSavingsOffset = daylightSavingsOffset,
+        extraConfigJson = alarmConfig.getString("extraConfigJson")
+      )
+    } catch (e: Exception) {
+      promise?.reject(Error("Error parsing alarm configuration. " + e.message))
+      Log.d("rn-alarm-debug", "Error parsing alarm configuration. " + e.message)
+      Log.d("rn-alarm-debug", e.stackTraceToString())
       return null
     }
-
-    // Retrieve mandatory fields.
-    val id = alarmConfig.getInt("id")
-    val hour = alarmConfig.getInt("hour")
-    val minute = alarmConfig.getInt("minute")
-
-    // Calculate offsets.
-    val timeZone: TimeZone = TimeZone.getDefault()
-    val calendar: Calendar = Calendar.getInstance(timeZone)
-    val timezoneOffset: Int = timeZone.getOffset(calendar.getTimeInMillis())
-    val daylightSavingsOffset: Int = timeZone.getOffset(calendar.getTimeInMillis())
-
-    // Create basic alarm.
-    val alarm = RnAlarm(
-      id = id,
-      hour = hour,
-      minute = minute,
-      timezoneOffset = timezoneOffset,
-      daylightSavingsOffset = daylightSavingsOffset,
-    )
-
-    // Check for all other optional parameters.
-    val iterator = alarmConfig.keySetIterator()
-    while (iterator.hasNextKey()) {
-      when (val key = iterator.nextKey()) {
-        "id" -> {} // Already saved above
-        "hour" -> {}
-        "minute" -> {}
-        "second" -> alarm.second = alarmConfig.getInt(key)
-        "name" -> alarm.name = alarmConfig.getString(key)
-        "customSound" -> alarm.customSound = alarmConfig.getString(key)
-        "repeat" -> alarm.repeat = alarmConfig.getBoolean(key)
-        "repeatOnDays" -> alarm.repeatOnDays = alarmConfig.getString(key)!!
-        "adjustWithTimezone" -> alarm.adjustWithTimezone = alarmConfig.getBoolean(key)
-        "adjustWithDaylightSavings" -> alarm.adjustWithDaylightSavings = alarmConfig.getBoolean(key)
-        "launchApp" -> alarm.launchApp = alarmConfig.getBoolean(key)
-        "showNotification" -> alarm.showNotification = alarmConfig.getBoolean(key)
-        "notificationConfig" -> {} // Handled below
-        else -> {
-          promise?.reject(Error("Invalid alarm config parameter provided: $key"))
-          return null
-        }
-      }
-    }
-
-    if (alarmConfig.hasKey("notificationConfig")) {
-      val notifConfig = NotificationConfig()
-      val notifMap = alarmConfig.getMap("notificationConfig")!!
-      val iterator2 = notifMap.keySetIterator()
-      while (iterator2.hasNextKey()) {
-        when (val key2 = iterator2.nextKey()) {
-          "title" -> notifConfig.title = notifMap.getString(key2)!!
-          "description" -> notifConfig.description = notifMap.getString(key2)!!
-          "showSnoozeButton" -> notifConfig.showSnoozeButton = notifMap.getBoolean(key2)
-          "snoozeButtonText" -> notifConfig.snoozeButtonText = notifMap.getString(key2)!!
-          "snoozeTime" -> notifConfig.snoozeTime = notifMap.getInt(key2)
-          "showTurnOffButton" -> notifConfig.showTurnOffButton = notifMap.getBoolean(key2)
-          "turnOffButtonText" -> notifConfig.turnOffButtonText = notifMap.getString(key2)!!
-          else -> {
-            promise?.reject(Error("Invalid alarm notification config parameter provided: $key2"))
-            return null
-          }
-        }
-      }
-      alarm.notificationConfig = notifConfig
-    }
-
-    return alarm
   }
 
   /**
    * Convert a RnAlarm into a ReadableMap that can be sent to React Native.
    */
   fun getMapFromRnAlarm(alarm: RnAlarm): WritableMap {
-    val map = Arguments.createMap()
-
-    map.putInt("id", alarm.id)
-    map.putInt("hour", alarm.hour)
-    map.putInt("minute", alarm.minute)
-    map.putInt("second", alarm.second)
-    if (alarm.name != null) map.putString("customSound", alarm.name)
-    if (alarm.customSound != null) map.putString("customSound", alarm.customSound)
-    if (alarm.soundDuration != null) map.putInt("customSound", alarm.soundDuration!!)
-    map.putBoolean("repeat", alarm.repeat)
-    map.putString("repeatOnDays", alarm.repeatOnDays)
-    // Purposefully omit `timezoneOffset` and `daylightSavingsOffset` as that is only used for
-    // calculations on the native side.
-    map.putBoolean("adjustWithTimezone", alarm.adjustWithTimezone)
-    map.putBoolean("adjustWithDaylightSavings", alarm.adjustWithDaylightSavings)
-    map.putBoolean("launchApp", alarm.launchApp)
-    map.putBoolean("showNotification", alarm.showNotification)
-
-    val notifConfigMap = Arguments.createMap()
-    val notifConfig = alarm.notificationConfig
-    notifConfigMap.putString("title", notifConfig.title)
-    notifConfigMap.putString("description", notifConfig.description)
-    notifConfigMap.putBoolean("showSnoozeButton", notifConfig.showSnoozeButton)
-    notifConfigMap.putString("snoozeButtonText", notifConfig.snoozeButtonText)
-    notifConfigMap.putInt("snoozeTime", notifConfig.snoozeTime)
-    notifConfigMap.putBoolean("showTurnOffButton", notifConfig.showTurnOffButton)
-    notifConfigMap.putString("turnOffButtonText", notifConfig.turnOffButtonText)
-    map.putMap("notificationConfig", notifConfigMap)
-
-    return map
+    return Arguments.createMap().apply {
+      putInt("id", alarm.id)
+      putInt("hour", alarm.hour)
+      putInt("minute", alarm.minute)
+      putInt("second", alarm.second)
+      putBoolean("enabled", alarm.enabled)
+      putString("name", alarm.name)
+      putString("repeatOnDays", alarm.repeatOnDays)
+      putString("soundPath", alarm.soundPath)
+      if (alarm.soundDuration != null) putInt("soundDuration", alarm.soundDuration!!)
+      else putString("soundDuration", null)
+      putDouble("soundVolume", alarm.soundVolume.toDouble())
+      putBoolean("launchApp", alarm.launchApp)
+      putInt("snoozeTime", alarm.snoozeTime)
+      putBoolean("militaryTime", alarm.militaryTime)
+      putBoolean("autoSnooze", alarm.autoSnooze)
+      putInt("maxAutoSnoozeCounter", alarm.maxAutoSnoozeCounter)
+      putBoolean("showNotif", alarm.showNotif)
+      putString("notifTitle", alarm.notifTitle)
+      putString("notifDescription", alarm.notifDescription)
+      putBoolean("notifShowSnooze", alarm.notifShowSnooze)
+      putString("notifSnoozeText", alarm.notifSnoozeText)
+      putBoolean("notifShowTurnOff", alarm.notifShowTurnOff)
+      putString("notifTurnOffText", alarm.notifTurnOffText)
+      putBoolean("showReminderNotif", alarm.showReminderNotif)
+      putDouble("reminderVolume", alarm.reminderVolume.toDouble())
+      putInt("reminderNotifTimeBefore", alarm.reminderNotifTimeBefore)
+      putString("reminderNotifTitle", alarm.reminderNotifTitle)
+      putString("reminderNotifDescription", alarm.reminderNotifDescription)
+      putString("reminderNotifTurnOffText", alarm.reminderNotifTurnOffText)
+      putBoolean("showMissedNotif", alarm.showMissedNotif)
+      putString("missedNotifTitle", alarm.missedNotifTitle)
+      putString("missedNotifDescription", alarm.missedNotifDescription)
+      putBoolean("adjustWithTimezone", alarm.adjustWithTimezone)
+      putBoolean("adjustWithDaylightSavings", alarm.adjustWithDaylightSavings)
+      putString("extraConfigJson", alarm.extraConfigJson)
+    }
   }
 
   /**
-   * Determines whether an alarm should repeat based on values given by repeat and repeatOnDays.
+   * Replaces the occurrence of `$time` in a string with the current time.
    */
-  fun alarmShouldRepeat(alarm: RnAlarm): Boolean {
-    return alarm.repeat && !alarm.repeatOnDays.isEmpty()
+  fun formatStringWithTime(inputString: String, alarm: RnAlarm, snoozeCounter: Int = 0): String {
+    // Add on snoozeTime, if required.
+    var snoozeTime = snoozeCounter * alarm.snoozeTime
+
+    var hours = alarm.hour + (snoozeTime / (1000 * 60 * 60)) % 24
+    var minutes = alarm.minute + (snoozeTime / (1000 * 60)) % 60
+    var seconds = alarm.second + (snoozeTime / 1000) % 60
+
+    // Adjust minutes and hours if necessary
+    if (seconds >= 60) {
+      minutes += seconds / 60
+      seconds %= 60
+    }
+    if (minutes >= 60) {
+      hours += minutes / 60
+      minutes %= 60
+    }
+
+    val formattedTime = if (alarm.militaryTime) {
+      String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+      val amPm = if (hours < 12) "am" else "pm"
+      val formattedHours = if (hours % 12 == 0) 12 else hours % 12
+      String.format("%d:%02d:%02d %s", formattedHours, minutes, seconds, amPm)
+    }
+
+    return inputString.replace("\$time", formattedTime)
   }
 }

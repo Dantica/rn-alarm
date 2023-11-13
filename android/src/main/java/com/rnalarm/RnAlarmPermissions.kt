@@ -24,7 +24,7 @@ import com.facebook.react.modules.core.PermissionListener
 class RnAlarmPermissions(private val context: ReactApplicationContext) {
   companion object {
     object NOTIFICATION_CHANNEL {
-      const val ID = "alarm_channel"
+      const val ID = "rn_alarm_channel"
       const val NAME = "Alarms"
       const val DESC = "Notifications that display during alarms."
     }
@@ -60,7 +60,6 @@ class RnAlarmPermissions(private val context: ReactApplicationContext) {
   fun hasPermission(permission: String): Boolean {
     return when (permission) {
       // Handle notification carefully as prior to API 33 it wasn't technically a permission.
-      // Also need to check if alarm channel has been turned off.
       Manifest.permission.POST_NOTIFICATIONS -> {
         var notificationsEnabled = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -75,6 +74,7 @@ class RnAlarmPermissions(private val context: ReactApplicationContext) {
           return true
         }
 
+        // Also need to check if alarm channel has been turned off.
         return notificationsEnabled && isNotificationChannelEnabled()
       }
 
