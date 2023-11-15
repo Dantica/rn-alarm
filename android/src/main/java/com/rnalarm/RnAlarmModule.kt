@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 
 class RnAlarmModule(reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
+  private val context = reactApplicationContext
 
   companion object {
     const val NAME = "RnAlarm"
@@ -25,6 +26,11 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
 
   /**
    * Schedule an alarm.
+   * @param config
+   * The alarm configuration properties to set.
+   * @param promise
+   * A promise which resolves to the unix time the alarm is next scheduled for, or null if the alarm
+   * has been disabled.
    */
   @ReactMethod
   fun setAlarm(
@@ -35,19 +41,16 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
 
     if (alarm != null) {
       try {
-        if (alarm.enabled) {
-          RnAlarmScheduler(reactApplicationContext).scheduleAlarm(
-            alarm,
-            isReminder = alarm.showReminderNotif
-          )
-        } else {
-          RnAlarmScheduler(reactApplicationContext).cancelAlarm(alarm.id)
-        }
-
-        // Save to storage.
         CoroutineScope(Dispatchers.IO).launch {
-          RnAlarmDatastore(reactApplicationContext).save(alarm)
-          promise.resolve(RnAlarmUtils.getMapFromRnAlarm(alarm))
+          RnAlarmDatastore(context).save(alarm)
+
+          if (alarm.enabled) {
+            RnAlarmScheduler(context).scheduleAlarm(alarm, isReminder = alarm.showReminderNotif)
+            promise.resolve(RnAlarmUtils.calculateNextAlarmTime(alarm).toDouble())
+          } else {
+            RnAlarmScheduler(context).cancelAlarm(alarm.id)
+            promise.resolve(null)
+          }
         }
       } catch (e: Exception) {
         Log.d("rn-alarm-debug", "Failed to set alarm. ${e.message}")
@@ -58,67 +61,80 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
   }
 
   /**
-   * Stop an alarm.
+   * Turn off an alarm. If the alarm is not playing, it will instead just turn the alarm off for the
+   * day and reschedule to the next available day.
+   * @param alarmID
+   * Alarm ID to turn off.
+   * @param promise
+   * A promise which resolves to the unix time the alarm is next scheduled for.
    */
   @ReactMethod
   fun turnOffAlarm(
     alarmID: Int,
+    promise: Promise
   ) {
-    RnAlarmPlayer.stop(userStopped = true)
-  }
-
-  /**
-   * Snooze an alarm.
-   */
-  @ReactMethod
-  fun snoozeAlarm(
-    alarmID: Int,
-    promise: Promise,
-  ) {
-    RnAlarmPlayer.stop(userSnoozed = true)
-  }
-
-  /**
-   * Turn alarm off for today.
-   */
-  @ReactMethod
-  fun turnOffAlarmForToday(
-    alarmID: Int,
-  ) {
-    RnAlarmPlayer.stop(dontReschedule = true)
-    RnAlarmScheduler(reactApplicationContext).cancelAlarm(alarmID)
     CoroutineScope(Dispatchers.IO).launch {
       val alarm =
-        RnAlarmDatastore(reactApplicationContext).get(alarmID)
-
-      if (alarm != null) {
-        RnAlarmNotificationManager(reactApplicationContext).removeNotification(alarmID)
-        RnAlarmScheduler(reactApplicationContext).scheduleAlarm(
-          alarm,
-          isReminder = alarm.showReminderNotif,
-          turnOffForToday = true
+        RnAlarmDatastore(context).get(alarmID)
+      if (alarm == null) {
+        promise.reject(Error("Alarm with ID $alarmID not found."))
+      } else {
+        RnAlarmController(context, alarm).turnOffAlarm(userStopped = true)
+        promise.resolve(
+          RnAlarmUtils.calculateNextAlarmTime(alarm, turnOffForToday = true).toDouble()
         )
       }
     }
   }
 
   /**
+   * Snooze an alarm.
+   * @param alarmID
+   * ID of the alarm to snooze.
+   * @param promise
+   * A promise which resolves to the unix time the alarm is next scheduled for.
+   */
+  @ReactMethod
+  fun snoozeAlarm(
+    alarmID: Int,
+    promise: Promise
+  ) {
+    CoroutineScope(Dispatchers.IO).launch {
+      val alarm =
+        RnAlarmDatastore(context).get(alarmID)
+
+      if (alarm == null)
+        promise.reject(Error("Alarm with ID $alarmID not found."))
+      else if (!RnAlarmPlayer.isPlaying())
+        promise.reject(Error("Attempting to snooze an alarm that is not currently playing."))
+      else
+        RnAlarmController(context, alarm).snoozeAlarm(userSnoozed = true)
+    }
+  }
+
+  /**
    * Delete an alarm.
+   * @param alarmID
+   * ID of the alarm to delete.
+   * @param promise
+   * A promise that resolves to null.
    */
   @ReactMethod
   fun deleteAlarm(
     alarmID: Int,
     promise: Promise,
   ) {
-    RnAlarmScheduler(reactApplicationContext).cancelAlarm(alarmID)
+    RnAlarmScheduler(context).cancelAlarm(alarmID)
     CoroutineScope(Dispatchers.IO).launch {
-      RnAlarmDatastore(reactApplicationContext).delete(alarmID)
+      RnAlarmDatastore(context).delete(alarmID)
       promise.resolve(null)
     }
   }
 
   /**
-   * Get the currently playing alarm, or null if nothing is playing.
+   * Gets the currently playing alarm.
+   * @param promise
+   * A promise that resolves to the currently playing alarm, or null if one is not playing.
    */
   @ReactMethod
   fun getCurrentlyPlayingAlarm(promise: Promise) {
@@ -128,12 +144,12 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
     } else {
       CoroutineScope(Dispatchers.IO).launch {
         val currentlyPlayingAlarm =
-          RnAlarmDatastore(reactApplicationContext).get(currentlyPlayingAlarmID)
-        if (currentlyPlayingAlarm == null) {
-          promise.resolve(null)
-          Log.d("rn-alarm-debug", "Could not retrieve currently playing alarm.")
-        } else {
+          RnAlarmDatastore(context).get(currentlyPlayingAlarmID)
+        if (currentlyPlayingAlarm != null) {
           promise.resolve(RnAlarmUtils.getMapFromRnAlarm(currentlyPlayingAlarm))
+        } else {
+          promise.reject(Error("Could not retrieve currently playing alarm."))
+          Log.d("rn-alarm-debug", "Could not retrieve currently playing alarm.")
         }
       }
     }
@@ -161,6 +177,11 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
       if (alarm == null) promise.resolve(null)
       else promise.resolve(RnAlarmUtils.calculateNextAlarmTime(alarm).toDouble())
     }
+  }
+
+  @ReactMethod
+  fun getAlarmTime(alarm: RnAlarm, promise: Promise) {
+    promise.resolve(RnAlarmUtils.calculateNextAlarmTime(alarm).toDouble())
   }
 
   /**

@@ -8,11 +8,14 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "rn_saved_alarms")
 
-class RnAlarmDatastore(private val context: Context) {
+class RnAlarmDatastore(context: Context) {
   private val dataStore: DataStore<Preferences> = context.dataStore
 
   suspend fun save(alarm: RnAlarm) {
@@ -22,6 +25,10 @@ class RnAlarmDatastore(private val context: Context) {
     dataStore.edit { preferences ->
       preferences[stringPreferencesKey(alarm.id.toString())] = alarmJson
     }
+  }
+
+  fun saveInBackground(alarm: RnAlarm) {
+    CoroutineScope(Dispatchers.IO).launch { save(alarm) }
   }
 
   suspend fun delete(alarmID: Int) {

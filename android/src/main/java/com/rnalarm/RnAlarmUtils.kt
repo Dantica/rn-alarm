@@ -13,45 +13,44 @@ import java.util.TimeZone
 object RnAlarmUtils {
   /**
    * Determines the next time the alarm should ring, in milliseconds.
+   * @param turnOffForToday
+   * Whether the next alarm time should skip today.
    */
   fun calculateNextAlarmTime(alarm: RnAlarm, turnOffForToday: Boolean = false): Long {
-    val currentCalendar = Calendar.getInstance()
-    if (turnOffForToday) currentCalendar.add(Calendar.DATE, 1)
-
-    // Set the calendar for the next alarm.
+    // Set the calendar for the alarm time today.
     val alarmCalendar = Calendar.getInstance()
     alarmCalendar.set(Calendar.HOUR_OF_DAY, alarm.hour)
     alarmCalendar.set(Calendar.MINUTE, alarm.minute)
     alarmCalendar.set(Calendar.SECOND, alarm.second)
     alarmCalendar.set(Calendar.MILLISECOND, 0)
-    if (turnOffForToday) alarmCalendar.add(Calendar.DATE, 1)
 
-    // Get the current day of the week (1 for Monday, 7 for Sunday). Value must be adjusted, as by
-    // default Android Studio makes Sunday 1 and Saturday 7.
-    var currentDayOfWeekCounter = (currentCalendar.get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1
-
-    // Check if the alarm time has already passed for the current day.
-    if (alarmCalendar.timeInMillis < currentCalendar.timeInMillis && !turnOffForToday) {
-      // If the alarm time has passed for today, move to the next day.
+    if (alarmCalendar.timeInMillis < Calendar.getInstance().timeInMillis) {
+      // If the alarm has already passed, skip today.
       alarmCalendar.add(Calendar.DATE, 1)
-      currentDayOfWeekCounter = (currentDayOfWeekCounter % 7) + 1 // Wrap around if needed.
+    } else if (turnOffForToday) {
+      // If the alarm is upcoming, but turnOffForToday today is set, then still skip today.
+      alarmCalendar.add(Calendar.DATE, 1)
     }
 
-    // Search for the next valid day.
+    // Search for the next valid day, if repeat is on.
     if (!alarm.repeatOnDays.isNullOrEmpty()) {
-      val maxCounter = 7
-      var counter = 0
-      while (currentDayOfWeekCounter.toString() !in alarm.repeatOnDays!! && counter < maxCounter) {
+      // Get the alarm's current day of the week (1 for Monday, 7 for Sunday). Must adjust as by
+      // default Android Studio makes Sunday 1 and Saturday 7.
+      var alarmDayOfWeek = (alarmCalendar.get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1
+
+      val maxCount = 7
+      var count = 0
+      while (alarmDayOfWeek.toString() !in alarm.repeatOnDays!! && count < maxCount) {
         alarmCalendar.add(Calendar.DATE, 1)
-        currentDayOfWeekCounter = (currentDayOfWeekCounter % 7) + 1
-        counter++
+        alarmDayOfWeek = (alarmDayOfWeek % 7) + 1
+        count++
       }
     }
 
     return alarmCalendar.timeInMillis
   }
 
-  fun calculateNextSnoozedAlarmTime(alarm: RnAlarm, snoozeCounter: Int): Long {
+  fun calculateNextSnoozedAlarmTime(alarm: RnAlarm): Long {
     val currentCalendar = Calendar.getInstance()
 
     // Set the calendar for the next alarm.
@@ -61,19 +60,11 @@ object RnAlarmUtils {
     alarmCalendar.set(Calendar.SECOND, alarm.second)
     alarmCalendar.set(Calendar.MILLISECOND, 0)
     // Add on extra snooze time.
-    alarmCalendar.add(Calendar.MILLISECOND, snoozeCounter * alarm.snoozeTime)
+    alarmCalendar.add(Calendar.MILLISECOND, alarm.snoozeCount * alarm.snoozeTime)
 
     // This shouldn't happen.
     if (alarmCalendar.timeInMillis < currentCalendar.timeInMillis) {
       Log.d("rn-alarm-debug", "Snoozing alarm, but snoozed alarm time is in the past.")
-      Log.d(
-        "rn-alarm-debug", "Current time: " +
-          SimpleDateFormat("dd/MM/yy HH:mm:ss").format(currentCalendar.timeInMillis)
-      )
-      Log.d(
-        "rn-alarm-debug", "Alarm time: " +
-          SimpleDateFormat("dd/MM/yy HH:mm:ss").format(alarmCalendar.timeInMillis)
-      )
     }
 
     return alarmCalendar.timeInMillis
@@ -106,24 +97,29 @@ object RnAlarmUtils {
         launchApp = alarmConfig.getBoolean("launchApp"),
         militaryTime = alarmConfig.getBoolean("militaryTime"),
         snoozeTime = alarmConfig.getInt("snoozeTime"),
-        autoSnooze = alarmConfig.getBoolean("autoSnooze"),
-        maxAutoSnoozeCounter = alarmConfig.getInt("maxAutoSnoozeCounter"),
+        maxAutoSnoozeCount = alarmConfig.getInt("maxAutoSnoozeCount"),
+        snoozeCount = alarmConfig.getInt("snoozeCount"),
         showNotif = alarmConfig.getBoolean("showNotif"),
         notifTitle = alarmConfig.getString("notifTitle")!!,
-        notifDescription = alarmConfig.getString("notifDescription")!!,
-        notifShowSnooze = alarmConfig.getBoolean("notifShowSnooze"),
-        notifSnoozeText = alarmConfig.getString("notifSnoozeText")!!,
-        notifShowTurnOff = alarmConfig.getBoolean("notifShowTurnOff"),
-        notifTurnOffText = alarmConfig.getString("notifTurnOffText")!!,
+        notifMsg = alarmConfig.getString("notifMsg")!!,
+        notifSnoozeBtn = alarmConfig.getBoolean("notifSnoozeBtn"),
+        notifSnoozeBtnTxt = alarmConfig.getString("notifSnoozeBtnTxt")!!,
+        notifTurnOffBtn = alarmConfig.getBoolean("notifTurnOffBtn"),
+        notifTurnOffBtnTxt = alarmConfig.getString("notifTurnOffBtnTxt")!!,
         showReminderNotif = alarmConfig.getBoolean("showReminderNotif"),
-        reminderVolume = alarmConfig.getDouble("reminderVolume").toFloat(),
-        reminderNotifTimeBefore = alarmConfig.getInt("reminderNotifTimeBefore"),
+        reminderSoundPath = alarmConfig.getString("reminderSoundPath"),
+        reminderSoundVolume = alarmConfig.getDouble("reminderSoundVolume").toFloat(),
+        reminderTimeBefore = alarmConfig.getInt("reminderTimeBefore"),
         reminderNotifTitle = alarmConfig.getString("reminderNotifTitle")!!,
-        reminderNotifDescription = alarmConfig.getString("reminderNotifDescription")!!,
-        reminderNotifTurnOffText = alarmConfig.getString("reminderNotifTurnOffText")!!,
+        reminderNotifMsg = alarmConfig.getString("reminderNotifMsg")!!,
+        reminderNotifTurnOffBtnTxt = alarmConfig.getString("reminderNotifTurnOffBtnTxt")!!,
+        showSnoozeNotif = alarmConfig.getBoolean("showSnoozeNotif"),
+        snoozeNotifTitle = alarmConfig.getString("snoozeNotifTitle")!!,
+        snoozeNotifMsg = alarmConfig.getString("snoozeNotifMsg")!!,
+        snoozeNotifTurnOffBtnTxt = alarmConfig.getString("snoozeNotifTurnOffBtnTxt")!!,
         showMissedNotif = alarmConfig.getBoolean("showMissedNotif"),
         missedNotifTitle = alarmConfig.getString("missedNotifTitle")!!,
-        missedNotifDescription = alarmConfig.getString("missedNotifDescription")!!,
+        missedNotifMsg = alarmConfig.getString("missedNotifMsg")!!,
         adjustWithTimezone = alarmConfig.getBoolean("adjustWithTimezone"),
         adjustWithDaylightSavings = alarmConfig.getBoolean("adjustWithDaylightSavings"),
         timezoneOffset = timezoneOffset,
@@ -157,24 +153,28 @@ object RnAlarmUtils {
       putBoolean("launchApp", alarm.launchApp)
       putInt("snoozeTime", alarm.snoozeTime)
       putBoolean("militaryTime", alarm.militaryTime)
-      putBoolean("autoSnooze", alarm.autoSnooze)
-      putInt("maxAutoSnoozeCounter", alarm.maxAutoSnoozeCounter)
+      putInt("maxAutoSnoozeCount", alarm.maxAutoSnoozeCount)
+      putInt("snoozeCount", alarm.snoozeCount)
       putBoolean("showNotif", alarm.showNotif)
       putString("notifTitle", alarm.notifTitle)
-      putString("notifDescription", alarm.notifDescription)
-      putBoolean("notifShowSnooze", alarm.notifShowSnooze)
-      putString("notifSnoozeText", alarm.notifSnoozeText)
-      putBoolean("notifShowTurnOff", alarm.notifShowTurnOff)
-      putString("notifTurnOffText", alarm.notifTurnOffText)
+      putString("notifMsg", alarm.notifMsg)
+      putBoolean("notifSnoozeBtn", alarm.notifSnoozeBtn)
+      putString("notifSnoozeBtnTxt", alarm.notifSnoozeBtnTxt)
+      putBoolean("notifTurnOffBtn", alarm.notifTurnOffBtn)
+      putString("notifTurnOffBtnTxt", alarm.notifTurnOffBtnTxt)
       putBoolean("showReminderNotif", alarm.showReminderNotif)
-      putDouble("reminderVolume", alarm.reminderVolume.toDouble())
-      putInt("reminderNotifTimeBefore", alarm.reminderNotifTimeBefore)
+      putDouble("reminderSoundVolume", alarm.reminderSoundVolume.toDouble())
+      putInt("reminderTimeBefore", alarm.reminderTimeBefore)
       putString("reminderNotifTitle", alarm.reminderNotifTitle)
-      putString("reminderNotifDescription", alarm.reminderNotifDescription)
-      putString("reminderNotifTurnOffText", alarm.reminderNotifTurnOffText)
+      putString("reminderNotifMsg", alarm.reminderNotifMsg)
+      putString("reminderNotifTurnOffBtnTxt", alarm.reminderNotifTurnOffBtnTxt)
+      putBoolean("showSnoozeNotif", alarm.showSnoozeNotif)
+      putString("snoozeNotifTitle", alarm.snoozeNotifTitle)
+      putString("snoozeNotifMsg", alarm.snoozeNotifMsg)
+      putString("snoozeNotifTurnOffBtnTxt", alarm.snoozeNotifTurnOffBtnTxt)
       putBoolean("showMissedNotif", alarm.showMissedNotif)
       putString("missedNotifTitle", alarm.missedNotifTitle)
-      putString("missedNotifDescription", alarm.missedNotifDescription)
+      putString("missedNotifDescription", alarm.missedNotifMsg)
       putBoolean("adjustWithTimezone", alarm.adjustWithTimezone)
       putBoolean("adjustWithDaylightSavings", alarm.adjustWithDaylightSavings)
       putString("extraConfigJson", alarm.extraConfigJson)
@@ -184,30 +184,30 @@ object RnAlarmUtils {
   /**
    * Replaces the occurrence of `$time` in a string with the current time.
    */
-  fun formatStringWithTime(inputString: String, alarm: RnAlarm, snoozeCounter: Int = 0): String {
-    // Add on snoozeTime, if required.
-    var snoozeTime = snoozeCounter * alarm.snoozeTime
+  fun formatStringWithTime(inputString: String, alarm: RnAlarm): String {
+    val calendar = Calendar.getInstance()
+    calendar.set(Calendar.HOUR_OF_DAY, alarm.hour)
+    calendar.set(Calendar.MINUTE, alarm.minute)
+    calendar.set(Calendar.SECOND, alarm.second)
+    calendar.set(Calendar.MILLISECOND, 0)
+    calendar.add(Calendar.MILLISECOND, alarm.snoozeCount * alarm.snoozeTime)
 
-    var hours = alarm.hour + (snoozeTime / (1000 * 60 * 60)) % 24
-    var minutes = alarm.minute + (snoozeTime / (1000 * 60)) % 60
-    var seconds = alarm.second + (snoozeTime / 1000) % 60
-
-    // Adjust minutes and hours if necessary
-    if (seconds >= 60) {
-      minutes += seconds / 60
-      seconds %= 60
-    }
-    if (minutes >= 60) {
-      hours += minutes / 60
-      minutes %= 60
-    }
+    val hour = calendar.get(Calendar.HOUR_OF_DAY)
+    val minute = calendar.get(Calendar.MINUTE)
+    val second = calendar.get(Calendar.SECOND)
 
     val formattedTime = if (alarm.militaryTime) {
-      String.format("%d:%02d:%02d", hours, minutes, seconds)
+      if (second == 0)
+        String.format("%d:%02d", hour, minute)
+      else
+        String.format("%d:%02d:%02d", hour, minute, second)
     } else {
-      val amPm = if (hours < 12) "am" else "pm"
-      val formattedHours = if (hours % 12 == 0) 12 else hours % 12
-      String.format("%d:%02d:%02d %s", formattedHours, minutes, seconds, amPm)
+      val amPm = if (hour < 12) "am" else "pm"
+      val formattedHours = if (hour % 12 == 0) 12 else hour % 12
+      if (second == 0)
+        String.format("%d:%02d %s", formattedHours, minute, amPm)
+      else
+        String.format("%d:%02d:%02d %s", formattedHours, minute, second, amPm)
     }
 
     return inputString.replace("\$time", formattedTime)
