@@ -67,7 +67,7 @@ class RnAlarmController(private val context: Context, private val alarm: RnAlarm
     }
   }
 
-  fun turnOffAlarm(userStopped: Boolean = false) {
+  fun turnOffAlarm(userStopped: Boolean = false, turnOffForToday: Boolean = false) {
     if (RnAlarmPlayer.isPlaying()) {
       RnAlarmPlayer.stop(userStopped = userStopped)
     } else {
@@ -78,7 +78,7 @@ class RnAlarmController(private val context: Context, private val alarm: RnAlarm
       RnAlarmScheduler(context).scheduleAlarm(
         alarm,
         isReminder = alarm.showReminderNotif,
-        turnOffForToday = true
+        turnOffForToday = turnOffForToday
       )
     }
   }

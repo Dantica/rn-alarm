@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableNativeFeedback, View } from 'react-native';
-import { setupAndroidNotifChannel } from 'rn-alarm';
+import { setupAndroidNotifChannel, useCurrentlyPlayingAlarm } from 'rn-alarm';
+import { AlarmManagerScreen } from './AlarmManagerScreen';
 import { AlarmScreen } from './AlarmScreen';
 import { PermissionScreen } from './PermissionScreen';
 
 export default function App() {
   const [screen, setScreen] = useState<'Alarms' | 'Permissions'>('Alarms');
+
+  const alarmPlaying = useCurrentlyPlayingAlarm();
 
   useEffect(() => {
     setupAndroidNotifChannel();
@@ -14,8 +17,14 @@ export default function App() {
   return (
     <View style={styles.container}>
       <View style={styles.contentContainer}>
-        {screen === 'Alarms' && <AlarmScreen />}
-        {screen === 'Permissions' && <PermissionScreen />}
+        {alarmPlaying ? (
+          <AlarmScreen alarm={alarmPlaying} />
+        ) : (
+          <>
+            {screen === 'Alarms' && <AlarmManagerScreen />}
+            {screen === 'Permissions' && <PermissionScreen />}
+          </>
+        )}
       </View>
 
       <View style={styles.bottomBar}>
@@ -65,5 +74,8 @@ export const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  alarmTime: {
+    fontSize: 50,
   },
 });

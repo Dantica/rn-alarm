@@ -17,6 +17,8 @@ package com.rnalarm
  * String containing the days on which the alarm should repeat, e.g. "12345"
  * for weekdays, "67" for weekends. (If given null or an empty string, will
  * only play once and then become disabled.)
+ * @property lastScheduledTime
+ * The last time an alarm was scheduled for, in unix time (milliseconds).
  * @property soundPath
  * Path to the sound file, e.g. "alarm.mp3" in the resource "raw" folder
  * would be "/raw/alarm" where ".mp3" is omitted. If given an empty string or
@@ -133,6 +135,7 @@ data class RnAlarm(
   var enabled: Boolean,
   var name: String?,
   var repeatOnDays: String?,
+  var lastScheduledTime: Long,
   var soundPath: String?,
   var soundDuration: Int?,
   var soundVolume: Float,

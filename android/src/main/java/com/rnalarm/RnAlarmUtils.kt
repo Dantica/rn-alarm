@@ -14,9 +14,14 @@ object RnAlarmUtils {
   /**
    * Determines the next time the alarm should ring, in milliseconds.
    * @param turnOffForToday
-   * Whether the next alarm time should skip today.
+   * Whether the next alarm time should skip today. When false, will find the time the current alarm
+   * is set to ring. When true, will find the time the alarm should next be rescheduled to after
+   * being turned off.
    */
   fun calculateNextAlarmTime(alarm: RnAlarm, turnOffForToday: Boolean = false): Long {
+    // Current time
+    val currentCalendar = Calendar.getInstance()
+
     // Set the calendar for the alarm time today.
     val alarmCalendar = Calendar.getInstance()
     alarmCalendar.set(Calendar.HOUR_OF_DAY, alarm.hour)
@@ -24,15 +29,15 @@ object RnAlarmUtils {
     alarmCalendar.set(Calendar.SECOND, alarm.second)
     alarmCalendar.set(Calendar.MILLISECOND, 0)
 
-    if (alarmCalendar.timeInMillis < Calendar.getInstance().timeInMillis) {
+    if (alarmCalendar.timeInMillis < currentCalendar.timeInMillis) {
       // If the alarm has already passed, skip today.
       alarmCalendar.add(Calendar.DATE, 1)
     } else if (turnOffForToday) {
-      // If the alarm is upcoming, but turnOffForToday today is set, then still skip today.
+      // If turnOffForToday is set, will require the alarm's time be at least the following day.
       alarmCalendar.add(Calendar.DATE, 1)
     }
 
-    // Search for the next valid day, if repeat is on.
+    // Search for the next valid day, if repeatOnDays is set.
     if (!alarm.repeatOnDays.isNullOrEmpty()) {
       // Get the alarm's current day of the week (1 for Monday, 7 for Sunday). Must adjust as by
       // default Android Studio makes Sunday 1 and Saturday 7.
@@ -89,6 +94,7 @@ object RnAlarmUtils {
         enabled = alarmConfig.getBoolean("enabled"),
         name = alarmConfig.getString("name"),
         repeatOnDays = alarmConfig.getString("repeatOnDays"),
+        lastScheduledTime = alarmConfig.getDouble("lastScheduledTime").toLong(),
         soundPath = alarmConfig.getString("soundPath"),
         soundDuration = if (alarmConfig.getDynamic("soundDuration").type == ReadableType.Number) alarmConfig.getInt(
           "soundDuration"
@@ -146,6 +152,7 @@ object RnAlarmUtils {
       putBoolean("enabled", alarm.enabled)
       putString("name", alarm.name)
       putString("repeatOnDays", alarm.repeatOnDays)
+      putDouble("lastScheduledTime", alarm.lastScheduledTime.toDouble())
       putString("soundPath", alarm.soundPath)
       if (alarm.soundDuration != null) putInt("soundDuration", alarm.soundDuration!!)
       else putString("soundDuration", null)
@@ -174,7 +181,7 @@ object RnAlarmUtils {
       putString("snoozeNotifTurnOffBtnTxt", alarm.snoozeNotifTurnOffBtnTxt)
       putBoolean("showMissedNotif", alarm.showMissedNotif)
       putString("missedNotifTitle", alarm.missedNotifTitle)
-      putString("missedNotifDescription", alarm.missedNotifMsg)
+      putString("missedNotifMsg", alarm.missedNotifMsg)
       putBoolean("adjustWithTimezone", alarm.adjustWithTimezone)
       putBoolean("adjustWithDaylightSavings", alarm.adjustWithDaylightSavings)
       putString("extraConfigJson", alarm.extraConfigJson)
@@ -197,17 +204,13 @@ object RnAlarmUtils {
     val second = calendar.get(Calendar.SECOND)
 
     val formattedTime = if (alarm.militaryTime) {
-      if (second == 0)
-        String.format("%d:%02d", hour, minute)
-      else
-        String.format("%d:%02d:%02d", hour, minute, second)
+      if (second == 0) String.format("%d:%02d", hour, minute)
+      else String.format("%d:%02d:%02d", hour, minute, second)
     } else {
       val amPm = if (hour < 12) "am" else "pm"
       val formattedHours = if (hour % 12 == 0) 12 else hour % 12
-      if (second == 0)
-        String.format("%d:%02d %s", formattedHours, minute, amPm)
-      else
-        String.format("%d:%02d:%02d %s", formattedHours, minute, second, amPm)
+      if (second == 0) String.format("%d:%02d %s", formattedHours, minute, amPm)
+      else String.format("%d:%02d:%02d %s", formattedHours, minute, second, amPm)
     }
 
     return inputString.replace("\$time", formattedTime)

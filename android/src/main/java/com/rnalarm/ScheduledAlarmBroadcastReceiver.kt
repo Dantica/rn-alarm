@@ -15,6 +15,7 @@ class ScheduledAlarmBroadcastReceiver : BroadcastReceiver() {
     const val ACTION_PLAY_ALARM = "rn_alarm.action.PLAY_ALARM"
     const val ACTION_SNOOZE_ALARM = "rn_alarm.action.SNOOZE_ALARM"
     const val ACTION_TURN_OFF_ALARM = "rn_alarm.action.TURN_OFF_ALARM"
+    const val ACTION_TURN_OFF_ALARM_FOR_TODAY = "rn_alarm.action.TURN_OFF_ALARM_FOR_TODAY"
   }
 
   override fun onReceive(
@@ -45,6 +46,10 @@ class ScheduledAlarmBroadcastReceiver : BroadcastReceiver() {
 
           ACTION_TURN_OFF_ALARM -> {
             RnAlarmController(context, alarm).turnOffAlarm(userStopped = true)
+          }
+
+          ACTION_TURN_OFF_ALARM_FOR_TODAY -> {
+            RnAlarmController(context, alarm).turnOffAlarm(userStopped = true, turnOffForToday = true)
           }
         }
       }

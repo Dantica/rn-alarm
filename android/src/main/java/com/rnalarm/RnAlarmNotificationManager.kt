@@ -53,7 +53,7 @@ class RnAlarmNotificationManager(private val context: Context) {
 
     addButton(
       alarm.id,
-      btnAction = ScheduledAlarmBroadcastReceiver.ACTION_TURN_OFF_ALARM,
+      btnAction = ScheduledAlarmBroadcastReceiver.ACTION_TURN_OFF_ALARM_FOR_TODAY,
       btnTxt = alarm.reminderNotifTurnOffBtnTxt,
       notificationBuilder
     )

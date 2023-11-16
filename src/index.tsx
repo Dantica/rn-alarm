@@ -120,6 +120,7 @@ export async function setAlarm(config: TAlarmConfig): Promise<number | null> {
     name: config.name ?? null,
     repeatOnDays:
       config.repeatOnDays === undefined ? '1234567' : config.repeatOnDays,
+    lastScheduledTime: 0,
     soundPath: config.soundPath ?? null,
     soundDuration: config.soundDuration ?? null,
     soundVolume: config.soundVolume ?? 50,
@@ -176,15 +177,19 @@ export async function updateAlarm(
 }
 
 /**
- * Turn off an alarm. If the alarm is not playing, it will instead turn the
- * alarm off for the day and reschedule to the next available day.
+ * Turn off an alarm.
  * @param alarmID
  * ID of the alarm to turn off.
+ * @param turnOffForToday
+ * If true, guarantees the alarm is set for at least the following day.
  * @returns
  * A promise which resolves to the unix time the alarm is next scheduled for.
  */
-export async function turnOffAlarm(alarmID: number): Promise<number> {
-  return RnAlarm.turnOffAlarm(alarmID);
+export async function turnOffAlarm(
+  alarmID: number,
+  turnOffForToday?: boolean
+): Promise<number> {
+  return RnAlarm.turnOffAlarm(alarmID, turnOffForToday ?? false);
 }
 
 /**
@@ -242,8 +247,10 @@ export async function getAlarm(alarmID: number): Promise<TAlarm | null> {
  * A promise that resolves to the unix time the alarm is next set to ring at,
  * or null if an alarm with the ID does not exist.
  */
-export async function getAlarmTime(alarmID: number): Promise<number | null> {
-  return RnAlarm.getAlarmTime(alarmID);
+export async function getNextAlarmTime(
+  alarmID: number
+): Promise<number | null> {
+  return RnAlarm.getNextAlarmTime(alarmID);
 }
 
 /**
@@ -282,10 +289,17 @@ export function useCurrentlyPlayingAlarm() {
 }
 
 /**
- * A helper function that converts unix time into a readable form.
+ * Helper function to get a human readable form of unix time (milliseconds).
  */
-export function getReadableAlarmTime(unixTime: number): string {
-  const date = new Date(unixTime);
+export function getReadableTime(
+  timeInMillis: number | null,
+  config?: {
+    hideDate?: boolean;
+    autoHideSeconds?: boolean;
+  }
+): string | null {
+  if (timeInMillis === null) return null;
+  const date = new Date(timeInMillis);
   const day = String(date.getDate()).padStart(2, '0');
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const year = String(date.getFullYear()).slice(2);
@@ -293,7 +307,14 @@ export function getReadableAlarmTime(unixTime: number): string {
   const minutes = String(date.getMinutes()).padStart(2, '0');
   const seconds = String(date.getSeconds()).padStart(2, '0');
 
-  return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+  let result = `${hours}:${minutes}`;
+
+  if (config && !config.hideDate) result = `${day}/${month}/${year} ${result}`;
+
+  if (!config || !config.autoHideSeconds || seconds !== '00')
+    result = `${result}:${seconds}`;
+
+  return result;
 }
 
 // ----------------------------------------------------------------------------
@@ -418,6 +439,11 @@ export type TAlarm = {
    */
   repeatOnDays: string | null;
   /**
+   * The last time an alarm was scheduled for, in unix time (milliseconds).
+   * Updated automatically when an alarm is scheduled.
+   */
+  lastScheduledTime: number;
+  /**
    * Path to the sound file, e.g. "alarm.mp3" in the resource "raw" folder
    * would be "/raw/alarm" where ".mp3" is omitted. If given an empty string or
    * null, will play the default notification sound.
@@ -460,7 +486,8 @@ export type TAlarm = {
    */
   maxAutoSnoozeCount: number;
   /**
-   * The number of times an alarm has been snoozed.
+   * The number of times an alarm has been snoozed. Updated automatically when
+   * an alarm is snoozed.
    */
   snoozeCount: number;
   /**

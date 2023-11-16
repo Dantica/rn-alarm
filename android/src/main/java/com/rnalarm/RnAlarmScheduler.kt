@@ -45,6 +45,10 @@ class RnAlarmScheduler(private val context: Context) {
     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
     alarmManager.setAlarmClock(info, pIntent)
 
+    // Updated lastPlayedTime
+    alarm.lastScheduledTime = timeInMillis
+    RnAlarmDatastore(context).saveInBackground(alarm)
+
     Log.d(
       "rn-alarm-debug", "Scheduled alarm for ${
         SimpleDateFormat("dd/MM/yy HH:mm:ss").format(

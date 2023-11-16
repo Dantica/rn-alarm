@@ -61,16 +61,18 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
   }
 
   /**
-   * Turn off an alarm. If the alarm is not playing, it will instead just turn the alarm off for the
-   * day and reschedule to the next available day.
+   * Turn off an alarm.
    * @param alarmID
    * Alarm ID to turn off.
+   * @param turnOffForToday
+   * If true, guarantees the alarm is set for at least the following day.
    * @param promise
    * A promise which resolves to the unix time the alarm is next scheduled for.
    */
   @ReactMethod
   fun turnOffAlarm(
     alarmID: Int,
+    turnOffForToday: Boolean,
     promise: Promise
   ) {
     CoroutineScope(Dispatchers.IO).launch {
@@ -79,9 +81,12 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
       if (alarm == null) {
         promise.reject(Error("Alarm with ID $alarmID not found."))
       } else {
-        RnAlarmController(context, alarm).turnOffAlarm(userStopped = true)
+        RnAlarmController(context, alarm).turnOffAlarm(
+          userStopped = true,
+          turnOffForToday = turnOffForToday
+        )
         promise.resolve(
-          RnAlarmUtils.calculateNextAlarmTime(alarm, turnOffForToday = true).toDouble()
+          RnAlarmUtils.calculateNextAlarmTime(alarm, turnOffForToday = turnOffForToday).toDouble()
         )
       }
     }
@@ -171,17 +176,17 @@ class RnAlarmModule(reactContext: ReactApplicationContext) :
    * Get the time an alarm is due to set off in milliseconds (null if the ID does not exist).
    */
   @ReactMethod
-  fun getAlarmTime(alarmID: Int, promise: Promise) {
+  fun getNextAlarmTime(alarmID: Int, promise: Promise) {
     CoroutineScope(Dispatchers.IO).launch {
       val alarm = RnAlarmDatastore(reactApplicationContext).get(alarmID)
       if (alarm == null) promise.resolve(null)
-      else promise.resolve(RnAlarmUtils.calculateNextAlarmTime(alarm).toDouble())
+      else {
+        val unixTime =
+          if (alarm.snoozeCount > 0) RnAlarmUtils.calculateNextSnoozedAlarmTime(alarm)
+          else RnAlarmUtils.calculateNextAlarmTime(alarm)
+        promise.resolve(unixTime.toDouble())
+      }
     }
-  }
-
-  @ReactMethod
-  fun getAlarmTime(alarm: RnAlarm, promise: Promise) {
-    promise.resolve(RnAlarmUtils.calculateNextAlarmTime(alarm).toDouble())
   }
 
   /**
